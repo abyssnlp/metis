@@ -6,6 +6,8 @@ class MetisKb < Formula
   version "0.1.0"
   license "MIT"
 
+  include Language::Python::Virtualenv
+
   depends_on "python@3.12"
 
   # Dependencies are installed via pip into a Homebrew-managed virtualenv so
