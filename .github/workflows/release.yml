@@ -82,38 +82,90 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Use a PAT with write access so the push triggers nothing further;
           # GITHUB_TOKEN pushes are excluded from workflow triggers by default.
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Compute new version and SHA256
-        id: info
+      - name: Fetch published PyPI sdist metadata
+        id: pypi
+        env:
+          PACKAGE: metis-kb
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          SHA256=$(sha256sum "dist/metis_kb-${VERSION}.tar.gz" | awk '{print $1}')
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          package = os.environ["PACKAGE"]
+          version = os.environ["REF_NAME"].removeprefix("v")
+          metadata_url = f"https://pypi.org/pypi/{package}/{version}/json"
+
+          data = None
+          last_error = None
+          for attempt in range(1, 31):
+              try:
+                  with urllib.request.urlopen(metadata_url, timeout=10) as response:
+                      data = json.load(response)
+                  break
+              except urllib.error.HTTPError as error:
+                  last_error = error
+                  if error.code != 404:
+                      raise
+              except urllib.error.URLError as error:
+                  last_error = error
+
+              print(f"PyPI metadata not ready yet for {package} {version}; retry {attempt}/30")
+              time.sleep(10)
+
+          if data is None:
+              raise SystemExit(f"Could not fetch {metadata_url}: {last_error}")
+
+          sdists = [file for file in data["urls"] if file.get("packagetype") == "sdist"]
+          if not sdists:
+              raise SystemExit(f"No sdist found in {metadata_url}")
+
+          sdist = sdists[0]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"url={sdist['url']}\n")
+              output.write(f"sha256={sdist['digests']['sha256']}\n")
+          PY
 
       - name: Patch Formula/metis-kb.rb
         env:
-          VERSION: ${{ steps.info.outputs.version }}
-          SHA256: ${{ steps.info.outputs.sha256 }}
+          VERSION: ${{ steps.pypi.outputs.version }}
+          PYPI_URL: ${{ steps.pypi.outputs.url }}
+          SHA256: ${{ steps.pypi.outputs.sha256 }}
         run: |
-          URL="https://files.pythonhosted.org/packages/source/m/metis-kb/metis_kb-${VERSION}.tar.gz"
-          sed -i "s|url \".*\"|url \"${URL}\"|"           Formula/metis-kb.rb
-          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|"  Formula/metis-kb.rb
-          sed -i "s|version \".*\"|version \"${VERSION}\"|" Formula/metis-kb.rb
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("Formula/metis-kb.rb")
+          formula = path.read_text(encoding="utf-8")
+          replacements = {
+              r'url ".*"': f'url "{os.environ["PYPI_URL"]}"',
+              r'sha256 ".*"': f'sha256 "{os.environ["SHA256"]}"',
+              r'version ".*"': f'version "{os.environ["VERSION"]}"',
+          }
+
+          for pattern, replacement in replacements.items():
+              formula = re.sub(pattern, replacement, formula, count=1)
+
+          path.write_text(formula, encoding="utf-8")
+          PY
 
       - name: Commit updated formula
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Formula/metis-kb.rb; then
+            echo "Formula/metis-kb.rb is already up to date"
+            exit 0
+          fi
           git add Formula/metis-kb.rb
           git commit -m "chore: update Homebrew formula to ${{ github.ref_name }} [skip ci]"
           git push origin HEAD:main

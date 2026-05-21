@@ -1,7 +1,7 @@
 class MetisKb < Formula
   desc "Terminal knowledge base for commands, code snippets, and SQL queries"
   homepage "https://github.com/abyssnlp/metis"
-  url "https://files.pythonhosted.org/packages/source/m/metis-kb/metis_kb-0.1.2.tar.gz"
+  url "https://files.pythonhosted.org/packages/30/cc/6395178222812799169b5b0d15d506603df4bd6837cd57a7ca113121ed2d/metis_kb-0.1.2.tar.gz"
   sha256 "19e58b4c2d6dee07328c83dde58bc9b4ad692d78bfe05c548c559942ffad6dfe"
   version "0.1.2"
   license "MIT"
